@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Annotated, Any, Callable, Dict
 
@@ -13,6 +14,8 @@ from schemas import (
     SearchIngestResponse,
     SearchIngestTask,
     SearchResult,
+    SearchRole,
+    SearchRoleList,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,35 +176,121 @@ def ingest_documents(
     documents: Annotated[
         list[Dict[str, Any]],
         Field(
-            description="List of documents to ingest. Each document must have 'subject', 'content', and optionally 'visible_to' fields"
+            description="List of documents to ingest. Each document must have "
+                        "'subject', 'content', and optionally 'visible_to' fields."
         ),
     ],
-) -> SearchIngestResponse:
-    """Ingest multiple documents into a Globus Search index."""
+    max_batch_bytes: Annotated[
+        int,
+        Field(
+            description="Max request payload size in bytes per batch. "
+                        "Defaults to 8MB (safe margin under the 10MB Globus limit).",
+            default=8_000_000,
+        ),
+    ],
+    wait_for_completion: Annotated[
+        bool,
+        Field(
+            description="If True, block until all ingest tasks reach a terminal state.",
+            default=True,
+        ),
+    ],
+) -> list[SearchIngestResponse]:
+    """Ingest multiple documents into a Globus Search index, auto-batching by byte size."""
+    import time
+
     sc = get_search_client()
 
-    gmeta_docs = []
-    for doc in documents:
-        if "subject" not in doc or "content" not in doc:
-            raise ToolError("Each document must have 'subject' and 'content' fields")
-
-        visible_to = doc.get("visible_to", ["public"])
-        gmeta_doc = {
-            "ingest_type": "GMetaEntry",
-            "ingest_data": {
+    # --- 1. make_batches: split docs into byte-bounded batches ---
+    def make_batches(docs, max_bytes):
+        batch, batch_size = [], 0
+        for doc in docs:
+            if "subject" not in doc or "content" not in doc:
+                raise ToolError("Each document must have 'subject' and 'content' fields")
+            entry = {
                 "subject": doc["subject"],
-                "visible_to": visible_to,
+                "visible_to": doc.get("visible_to", ["public"]),
                 "content": doc["content"],
-            },
+            }
+            entry_bytes = len(json.dumps(entry).encode("utf-8"))
+            if batch and batch_size + entry_bytes > max_bytes:
+                yield batch
+                batch, batch_size = [], 0
+            batch.append(entry)
+            batch_size += entry_bytes
+        if batch:
+            yield batch
+
+    # --- 2. ingest_all: fire each batch and collect task IDs ---
+    responses = []
+    interval = 1.0 / 10  # respect 10 req/s rate limit
+
+    for batch in make_batches(documents, max_batch_bytes):
+        gmeta_list = {
+            "ingest_type": "GMetaList",
+            "ingest_data": {"gmeta": batch},
         }
-        gmeta_docs.append(gmeta_doc)
+        try:
+            r = sc.ingest(index_id, gmeta_list)
+        except globus_sdk.GlobusAPIError as e:
+            raise ToolError(f"Failed to ingest documents: {e}")
+        responses.append(SearchIngestResponse(task_id=r.data["task_id"]))
+        time.sleep(interval)
 
-    try:
-        r = sc.ingest(index_id, gmeta_docs)
-    except globus_sdk.GlobusAPIError as e:
-        raise ToolError(f"Failed to ingest documents: {e}")
+    # --- 3. poll_tasks: wait for all tasks to reach a terminal state ---
+    if wait_for_completion:
+        pending = {r.task_id for r in responses}
+        while pending:
+            done = set()
+            for task_id in list(pending):
+                try:
+                    result = sc.get_task(task_id)
+                    if result.data["state"] in ("SUCCESS", "FAILED"):
+                        done.add(task_id)
+                except globus_sdk.GlobusAPIError as e:
+                    raise ToolError(f"Failed to poll task {task_id}: {e}")
+            pending -= done
+            if pending:
+                time.sleep(2.0)
 
-    return SearchIngestResponse(task_id=r.data["task_id"])
+    return responses
+
+
+@mcp.tool
+def ingest_from_file(
+    index_id: Annotated[str, Field(description="ID of the search index")],
+    file_path: Annotated[
+        str,
+        Field(
+            description="Absolute path to a JSON file containing a list of documents. "
+                        "Each document must have 'subject', 'content', and optionally 'visible_to' fields."
+        ),
+    ],
+    max_batch_bytes: Annotated[
+        int,
+        Field(
+            description="Max request payload size in bytes per batch. Defaults to 8MB.",
+            default=8_000_000,
+        ),
+    ] = 8_000_000,
+    wait_for_completion: Annotated[
+        bool,
+        Field(
+            description="If True, block until all ingest tasks reach a terminal state.",
+            default=True,
+        ),
+    ] = True,
+) -> list[SearchIngestResponse]:
+    """Ingest documents from a local JSON file into a Globus Search index."""
+    import os
+
+    if not os.path.isfile(file_path):
+        raise ToolError(f"File not found: {file_path}")
+    with open(file_path, encoding="utf-8") as f:
+        documents = json.load(f)
+    if not isinstance(documents, list):
+        raise ToolError("File must contain a JSON array of documents")
+    return ingest_documents(index_id, documents, max_batch_bytes, wait_for_completion)
 
 
 @mcp.tool
@@ -238,6 +327,29 @@ def delete_subject(
         raise ToolError(f"Failed to delete subject: {e}")
 
     return {"message": f"Subject '{subject}' deleted from index {index_id}"}
+
+
+@mcp.tool
+def delete_by_query(
+    index_id: Annotated[str, Field(description="ID of the search index")],
+    query: Annotated[
+        str,
+        Field(
+            description=(
+                "Search query string. Use '*' to delete all documents in the index."
+            )
+        ),
+    ],
+) -> SearchIngestResponse:
+    """Delete all documents in a Globus Search index that match a query string."""
+    sc = get_search_client()
+
+    try:
+        r = sc.delete_by_query(index_id, {"q": query})
+    except globus_sdk.GlobusAPIError as e:
+        raise ToolError(f"Failed to delete by query: {e}")
+
+    return SearchIngestResponse(task_id=r.data["task_id"])
 
 
 @mcp.tool
@@ -297,6 +409,81 @@ def get_subject(
         raise ToolError(f"Failed to get subject: {e}")
 
     return r.data
+
+
+@mcp.tool
+def get_index_roles(
+    index_id: Annotated[str, Field(description="ID of the search index")],
+) -> SearchRoleList:
+    """Get all role assignments on a Globus Search index."""
+    sc = get_search_client()
+
+    try:
+        r = sc.get_role_list(index_id)
+    except globus_sdk.GlobusAPIError as e:
+        raise ToolError(f"Failed to get roles: {e}")
+
+    roles = [
+        SearchRole(
+            role_id=entry["id"],
+            principal=entry["principal"],
+            role=entry["role_name"],
+        )
+        for entry in r.data.get("role_list", [])
+    ]
+    return SearchRoleList(roles=roles)
+
+
+@mcp.tool
+def create_role(
+    index_id: Annotated[str, Field(description="ID of the search index")],
+    principal: Annotated[
+        str,
+        Field(
+            description=(
+                "Principal URN to assign the role to. "
+                "Use 'urn:globus:auth:identity:<uuid>' for a user or "
+                "'urn:globus:groups:id:<uuid>' for a group."
+            )
+        ),
+    ],
+    role: Annotated[
+        str,
+        Field(
+            description="Role to assign: 'owner', 'admin', 'writer', or 'reader'"
+        ),
+    ],
+) -> SearchRole:
+    """Create a role assignment on a Globus Search index."""
+    sc = get_search_client()
+
+    try:
+        r = sc.create_role(index_id, {"principal": principal, "role_name": role})
+    except globus_sdk.GlobusAPIError as e:
+        raise ToolError(f"Failed to create role: {e}")
+
+    data = r.data
+    return SearchRole(
+        role_id=data["id"],
+        principal=data["principal"],
+        role=data["role"],
+    )
+
+
+@mcp.tool
+def delete_role(
+    index_id: Annotated[str, Field(description="ID of the search index")],
+    role_id: Annotated[str, Field(description="ID of the role assignment to delete")],
+) -> Dict[str, str]:
+    """Delete a role assignment from a Globus Search index."""
+    sc = get_search_client()
+
+    try:
+        sc.delete_role(index_id, role_id)
+    except globus_sdk.GlobusAPIError as e:
+        raise ToolError(f"Failed to delete role: {e}")
+
+    return {"message": f"Role {role_id} deleted from index {index_id}"}
 
 
 if __name__ == "__main__":

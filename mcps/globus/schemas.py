@@ -157,3 +157,17 @@ class SearchIngestTask(BaseModel):
     message: str | None = Field(
         default=None, description="Message about the task status"
     )
+
+
+class SearchRole(BaseModel):
+    role_id: str = Field(description="ID of the role assignment")
+    principal: str = Field(
+        description="Principal URN (Globus identity or group) assigned the role"
+    )
+    role: str = Field(
+        description="Role type: owner, admin, writer, or reader"
+    )
+
+
+class SearchRoleList(BaseModel):
+    roles: list[SearchRole] = Field(description="List of role assignments on the index")

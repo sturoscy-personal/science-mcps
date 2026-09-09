@@ -4,7 +4,7 @@ import platform
 import globus_sdk
 from fastmcp.exceptions import ClientError
 
-DEFAULT_CLIENT_ID = "ee05bbfa-2a1a-4659-95df-ed8946e3aae6"
+DEFAULT_CLIENT_ID = "5f84f687-2447-469d-9411-700eb4d47207"
 
 
 def get_client_creds():

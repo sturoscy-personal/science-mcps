@@ -96,6 +96,35 @@ def list_my_endpoints(
 
 
 @mcp.tool
+def register_endpoint(
+    display_name: Annotated[str, Field(description="Display name for the endpoint")],
+    public: Annotated[
+        bool,
+        Field(description="Whether the endpoint is publicly visible", default=False),
+    ],
+) -> ComputeEndpoint:
+    """Register a new Globus Compute endpoint via the API."""
+    gcc = get_compute_client()
+
+    data = {
+        "display_name": display_name,
+        "public": public,
+    }
+
+    try:
+        r = gcc._compute_web_client.v3.register_endpoint(data)
+    except globus_sdk.GlobusAPIError as e:
+        raise ToolError(f"Failed to register endpoint: {e}")
+
+    return ComputeEndpoint(
+        endpoint_id=r.data["uuid"],
+        name=r.data["name"],
+        display_name=r.data["display_name"],
+        owner_id=r.data["owner"],
+    )
+
+
+@mcp.tool
 def register_python_function(
     function_code: Annotated[
         str, Field(description="The text of the Python function source code")
@@ -211,6 +240,40 @@ def submit_task(
 
     task_id = r["tasks"][function_id][0]
     return ComputeSubmitResponse(task_id=task_id)
+
+
+@mcp.tool
+def delete_endpoint(
+    endpoint_id: Annotated[
+        str, Field(description="ID of the endpoint to delete")
+    ],
+) -> Dict[str, str]:
+    """Delete a Globus Compute endpoint."""
+    gcc = get_compute_client()
+
+    try:
+        gcc._compute_web_client.v2.delete_endpoint(endpoint_id)
+    except globus_sdk.GlobusAPIError as e:
+        raise ToolError(f"Failed to delete endpoint: {e}")
+
+    return {"message": f"Endpoint {endpoint_id} deleted successfully"}
+
+
+@mcp.tool
+def delete_function(
+    function_id: Annotated[
+        str, Field(description="ID of the function to delete")
+    ],
+) -> Dict[str, str]:
+    """Delete a registered Globus Compute function."""
+    gcc = get_compute_client()
+
+    try:
+        gcc._compute_web_client.v2.delete_function(function_id)
+    except globus_sdk.GlobusAPIError as e:
+        raise ToolError(f"Failed to delete function: {e}")
+
+    return {"message": f"Function {function_id} deleted successfully"}
 
 
 @mcp.tool
