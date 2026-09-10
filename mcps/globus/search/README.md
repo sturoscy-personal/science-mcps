@@ -86,6 +86,14 @@ Or add it manually to `.claude/settings.json`:
 | `get_subject` | Get details about a specific subject |
 | `delete_subject` | Delete a subject and all its entries |
 
+## Sample Data
+
+An example EV adoption dataset is available for testing:
+
+```bash
+curl -O https://gateways-2026-globus-search-data.s3.us-east-1.amazonaws.com/ev-data.csv
+```
+
 ## Example Usage
 
 Once configured, you can ask Claude:
