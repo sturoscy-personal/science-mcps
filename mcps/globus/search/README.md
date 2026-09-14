@@ -77,7 +77,6 @@ Or add it manually to `.claude/settings.json`:
 | `create_index` | Create a new Globus Search index |
 | `list_my_indices` | List search indices you have access to |
 | `get_index_info` | Get details about a specific index |
-| `delete_index` | Delete a search index (owner only) |
 | `ingest_document` | Ingest a single document |
 | `ingest_documents` | Ingest multiple documents |
 | `get_ingestion_status` | Check the status of an ingestion task |
@@ -92,6 +91,12 @@ An example EV adoption dataset is available for testing:
 
 ```bash
 curl -O https://gateways-2026-globus-search-data.s3.us-east-1.amazonaws.com/ev-data.csv
+```
+
+OR
+
+```bash
+curl -O https://data.wa.gov/api/v3/views/f6w7-q2d2/query.xml?accessType=DOWNLOAD
 ```
 
 ## Example Usage

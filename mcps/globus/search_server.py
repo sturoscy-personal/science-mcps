@@ -119,21 +119,6 @@ def get_index_info(
 
 
 @mcp.tool
-def delete_index(
-    index_id: Annotated[str, Field(description="ID of the search index to delete")],
-) -> Dict[str, str]:
-    """Delete a Globus Search index. Only the index owner can delete an index."""
-    sc = get_search_client()
-
-    try:
-        sc.delete_index(index_id)
-    except globus_sdk.GlobusAPIError as e:
-        raise ToolError(f"Failed to delete index: {e}")
-
-    return {"message": f"Index {index_id} deleted successfully"}
-
-
-@mcp.tool
 def ingest_document(
     index_id: Annotated[str, Field(description="ID of the search index")],
     subject: Annotated[
