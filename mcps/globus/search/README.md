@@ -96,7 +96,7 @@ curl -O https://gateways-2026-globus-search-data.s3.us-east-1.amazonaws.com/ev-d
 OR
 
 ```bash
-curl -O https://data.wa.gov/api/v3/views/f6w7-q2d2/query.xml?accessType=DOWNLOAD
+curl -O https://data.wa.gov/api/v3/views/f6w7-q2d2/export.csv
 ```
 
 ## Example Usage

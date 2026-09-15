@@ -1,0 +1,60 @@
+# Globus Connect Server v5.4 on Ubuntu 22.04
+# Provides a POSIX mapped collection whose root and identity mapping are
+# fully configured at runtime via environment variables — no user is
+# pre-baked into the image.
+#
+# Required runtime environment variables:
+#   GCS_ENDPOINT_NAME       Human-readable name for your endpoint
+#   GCS_ORGANIZATION        Your organization name (shown in Globus Web App)
+#   GCS_CONTACT_EMAIL       Admin contact email
+#   GLOBUS_CLIENT_ID        UUID of your Globus confidential client (app registration)
+#   GLOBUS_CLIENT_SECRET    Secret for the above client
+#
+# Optional runtime environment variables:
+#   GCS_OWNER               Globus identity URN of the endpoint owner
+#                           (defaults to the confidential client identity)
+#   GCS_GATEWAY_NAME        Display name for the POSIX storage gateway
+#                           (default: POSIX Gateway)
+#   GCS_GATEWAY_ROOT        Filesystem root exposed by the gateway
+#                           (default: /)
+#   GCS_COLLECTION_NAME     Display name for the mapped collection
+#                           (default: Home Collection)
+#   GCS_COLLECTION_ROOT     Filesystem root for the mapped collection
+#                           (default: /home — each mapped identity sees their home dir)
+
+FROM ubuntu:22.04
+
+# ── system deps ─────────────────────────────────────────────────────────────
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        gnupg \
+        tzdata \
+        sudo \
+        dbus \
+        apache2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Globus apt repository ────────────────────────────────────────────────────
+RUN curl -LOs https://downloads.globus.org/globus-connect-server/stable/installers/repo/deb/globus-repo_latest_all.deb \
+    && dpkg -i globus-repo_latest_all.deb \
+    && rm globus-repo_latest_all.deb \
+    && apt-get update
+
+# ── install Globus Connect Server 5.4 ───────────────────────────────────────
+RUN apt-get install -y --no-install-recommends globus-connect-server54 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── expose required ports ────────────────────────────────────────────────────
+# 443   – HTTPS (GCS Manager API + HTTPS collections)
+# 50000-51000 – GridFTP / data-channel range
+EXPOSE 443
+EXPOSE 50000-51000
+
+# ── entrypoint ───────────────────────────────────────────────────────────────
+COPY entrypoint-gcs.sh /usr/local/bin/entrypoint-gcs.sh
+RUN chmod +x /usr/local/bin/entrypoint-gcs.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-gcs.sh"]

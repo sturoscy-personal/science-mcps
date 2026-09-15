@@ -1,0 +1,68 @@
+# Globus Connect Server v5.4 on Ubuntu 22.04
+# Provides a POSIX mapped collection for the 'sturoscy' user.
+#
+# Required build-time args (set via --build-arg or docker-compose):
+#   none — all credentials are supplied at runtime via environment variables.
+#
+# Required runtime environment variables:
+#   GCS_ENDPOINT_NAME       Human-readable name for your endpoint
+#   GCS_ORGANIZATION        Your organization name (shown in Globus Web App)
+#   GCS_CONTACT_EMAIL       Admin contact email
+#   GLOBUS_CLIENT_ID        UUID of your Globus confidential client (app registration)
+#   GLOBUS_CLIENT_SECRET    Secret for the above client
+#
+# Optional runtime environment variables:
+#   GCS_OWNER               Globus identity URN of the endpoint owner
+#                           (defaults to the confidential client identity)
+#   GCS_COLLECTION_NAME     Display name for the mapped collection
+#                           (default: "sturoscy Home Collection")
+#   STUROSCY_UID            UID for the local sturoscy account (default: 1001)
+
+FROM ubuntu:22.04
+
+# ── system deps ─────────────────────────────────────────────────────────────
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        gnupg \
+        tzdata \
+        sudo \
+        dbus \
+        systemctl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Globus apt repository ────────────────────────────────────────────────────
+RUN curl -LOs https://downloads.globus.org/globus-connect-server/stable/installers/repo/deb/globus-repo_latest_all.deb \
+    && dpkg -i globus-repo_latest_all.deb \
+    && rm globus-repo_latest_all.deb \
+    && apt-get update
+
+# ── install Globus Connect Server 5.4 ───────────────────────────────────────
+RUN apt-get install -y --no-install-recommends globus-connect-server54 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── local user account for the mapped collection ────────────────────────────
+# GCS POSIX connector maps Globus identities to local accounts by username.
+# The account must exist on the node before collections are accessed.
+ARG STUROSCY_UID=1001
+RUN useradd \
+        --uid ${STUROSCY_UID} \
+        --create-home \
+        --shell /bin/bash \
+        sturoscy \
+    && mkdir -p /home/sturoscy/data \
+    && chown sturoscy:sturoscy /home/sturoscy/data
+
+# ── expose required ports ────────────────────────────────────────────────────
+# 443   – HTTPS (GCS Manager API + HTTPS collections)
+# 50000-51000 – GridFTP / data-channel range
+EXPOSE 443
+EXPOSE 50000-51000
+
+# ── entrypoint ───────────────────────────────────────────────────────────────
+COPY entrypoint-gcs.sh /usr/local/bin/entrypoint-gcs.sh
+RUN chmod +x /usr/local/bin/entrypoint-gcs.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-gcs.sh"]
