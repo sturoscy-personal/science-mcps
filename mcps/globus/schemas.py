@@ -144,11 +144,25 @@ class SearchSubject(BaseModel):
     entries: list[SearchEntry] = Field(description="List of entries for this subject")
 
 
+class FacetBucket(BaseModel):
+    value: str | int | float = Field(description="Bucket value")
+    count: int = Field(description="Number of documents with this value")
+
+
+class FacetResult(BaseModel):
+    name: str = Field(description="Name given to this facet in the request")
+    field_name: str | None = Field(default=None, description="Index field this facet aggregates over")
+    buckets: list[FacetBucket] = Field(description="Top-N value/count pairs")
+
+
 class SearchResult(BaseModel):
     gmeta: list[SearchSubject] = Field(description="Search results in GMetaList format")
     total: int = Field(description="Total number of results")
     offset: int = Field(description="Offset of current results")
     limit: int = Field(description="Limit used for current results")
+    facets: list[FacetResult] = Field(
+        default_factory=list, description="Facet/aggregation results, if requested"
+    )
 
 
 class SearchIngestTask(BaseModel):

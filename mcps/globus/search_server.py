@@ -9,6 +9,8 @@ from pydantic import Field
 
 from auth import get_globus_app
 from schemas import (
+    FacetBucket,
+    FacetResult,
     SearchCreateIndexResponse,
     SearchIndex,
     SearchIngestResponse,
@@ -31,11 +33,21 @@ def get_search_client():
 
 def _format_search_response(res: globus_sdk.GlobusHTTPResponse) -> SearchResult:
     data = res.data
+    facets = []
+    for fr in data.get("facet_results", []):
+        buckets = [
+            FacetBucket(value=b["value"], count=b["count"])
+            for b in fr.get("buckets", [])
+        ]
+        facets.append(
+            FacetResult(name=fr["name"], field_name=fr.get("field_name"), buckets=buckets)
+        )
     return SearchResult(
         gmeta=data.get("gmeta", []),
         total=data.get("total", 0),
         offset=data.get("offset", 0),
         limit=data.get("limit", 10),
+        facets=facets,
     )
 
 
@@ -469,6 +481,42 @@ def delete_role(
         raise ToolError(f"Failed to delete role: {e}")
 
     return {"message": f"Role {role_id} deleted from index {index_id}"}
+
+
+@mcp.tool
+def get_facets(
+    index_id: Annotated[str, Field(description="ID of the search index")],
+    fields: Annotated[
+        list[str],
+        Field(description="Field names to aggregate over, e.g. ['model_year', 'make']"),
+    ],
+    query: Annotated[
+        str,
+        Field(description="Filter query; use '*' to aggregate over all documents", default="*"),
+    ] = "*",
+    size: Annotated[
+        int,
+        Field(description="Maximum number of buckets (top-N values) per field", default=20),
+    ] = 20,
+) -> list[FacetResult]:
+    """Return term-count aggregations for one or more fields without fetching documents.
+
+    Useful for exploring the distribution of values across an index — e.g. how many
+    documents exist per year, per category, or per status field.
+    """
+    sc = get_search_client()
+
+    facet_specs = [
+        {"name": f, "field_name": f, "type": "terms", "size": size} for f in fields
+    ]
+    body = {"q": query, "limit": 0, "facets": facet_specs}
+
+    try:
+        r = sc.post_search(index_id, body)
+    except globus_sdk.GlobusAPIError as e:
+        raise ToolError(f"Facet query failed: {e}")
+
+    return _format_search_response(r).facets
 
 
 if __name__ == "__main__":
